@@ -89,13 +89,14 @@ Pick the row whose decision is `bypass`. Running the updater with `DRY_RUN=true`
 ## Behavior / safeguards
 
 - Syncs at startup and periodically thereafter.
-- Detects public IPv4 and IPv6 via Cloudflare `cdn-cgi/trace` (`tcp4` / `tcp6`).
+- Detects public IPv4 (required) and IPv6 (optional) via Cloudflare `cdn-cgi/trace` (`tcp4` / `tcp6`).
 - Reads policy each cycle and updates only if the Include IP set changed.
 - Refuses to change a policy unless its decision is `bypass` and every Include selector is a single-host IP (`/32` or `/128`), max two.
+- If IPv6 detection fails (common when the host has no IPv6 route), IPv4 still updates and any existing IPv6 Include is preserved.
 - Keeps the policy's other supported writable fields when issuing the PUT request.
 - Logs errors without exposing the API token; next cycle retries.
 - **IP-based bypass trusts every client sharing that public egress IP.** Keep application-level authentication in place.
 - A public IP change can temporarily interrupt access until the next successful sync.
-- Host (and Docker) must have working IPv6 outbound, or IPv6 detection fails and the cycle errors without changing the policy.
+- Compose uses `network_mode: host` so egress matches the host WAN (needed for IPv6 when the host supports it).
 - A reusable policy can be attached to several applications; updating it updates all of them.
 - Verify API compatibility and permission scopes in your Cloudflare account before production use.

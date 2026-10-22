@@ -3,6 +3,8 @@ services:
     image: ghcr.io/vthang87/cloudflare-access-ip-updater:latest
     build: .
     restart: unless-stopped
+    # Host network so IPv6 egress matches the NAS WAN (Docker bridge often has no IPv6).
+    network_mode: host
     env_file: .env
     read_only: true
     security_opt:

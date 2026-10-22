@@ -153,11 +153,36 @@ func detectPublicAddrs(ctx context.Context, url string) (publicAddrs, error) {
 	if err != nil {
 		return publicAddrs{}, fmt.Errorf("IPv4: %w", err)
 	}
+	addrs := publicAddrs{v4: v4}
 	v6, err := fetchTraceIP(ctx, "tcp6", url)
 	if err != nil {
-		return publicAddrs{}, fmt.Errorf("IPv6: %w", err)
+		// Many Docker hosts lack IPv6 egress; keep syncing IPv4 and preserve any existing IPv6 in the policy.
+		slog.Warn("IPv6 detection failed; will preserve existing IPv6 Include if present", "error", err)
+		return addrs, nil
 	}
-	return publicAddrs{v4: v4, v6: v6}, nil
+	addrs.v6 = v6
+	return addrs, nil
+}
+
+func isIPv6CIDR(cidr string) bool {
+	ip, _, err := net.ParseCIDR(cidr)
+	return err == nil && ip != nil && ip.To4() == nil
+}
+
+func desiredCIDRs(addrs publicAddrs, existing []string) []string {
+	out := []string{addrs.v4}
+	if addrs.v6 != "" {
+		out = append(out, addrs.v6)
+	} else {
+		for _, c := range existing {
+			if isIPv6CIDR(c) {
+				out = append(out, c)
+				break // at most one preserved IPv6 alongside IPv4
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func api(ctx context.Context, client *http.Client, c config, method, endpoint string, body io.Reader) (json.RawMessage, error) {
@@ -282,8 +307,6 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 	if err != nil {
 		return fmt.Errorf("detect IP: %w", err)
 	}
-	desired := []string{addrs.v4, addrs.v6}
-	sort.Strings(desired)
 
 	endpoint := policyEndpoint(c)
 	raw, err := api(ctx, client, c, http.MethodGet, endpoint, nil)
@@ -302,11 +325,12 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 	if err != nil {
 		return fmt.Errorf("refusing to modify policy: %w", err)
 	}
+	desired := desiredCIDRs(addrs, old)
 	if sameSet(old, desired) {
-		slog.Info("IP unchanged", "ipv4", addrs.v4, "ipv6", addrs.v6, "policy", p.Name)
+		slog.Info("IP unchanged", "ipv4", addrs.v4, "ipv6", addrs.v6, "include", desired, "policy", p.Name)
 		return nil
 	}
-	slog.Info("IP changed", "previous", old, "ipv4", addrs.v4, "ipv6", addrs.v6, "policy", p.Name, "dry_run", c.dry)
+	slog.Info("IP changed", "previous", old, "ipv4", addrs.v4, "ipv6", addrs.v6, "include", desired, "policy", p.Name, "dry_run", c.dry)
 	if c.dry {
 		return nil
 	}
@@ -315,7 +339,7 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 	if err := json.Unmarshal(raw, &full); err != nil {
 		return err
 	}
-	selectors, err := ipSelectors(addrs.v4, addrs.v6)
+	selectors, err := ipSelectors(desired...)
 	if err != nil {
 		return err
 	}
@@ -348,7 +372,7 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 	if _, err := api(ctx, client, c, http.MethodPut, endpoint, strings.NewReader(string(data))); err != nil {
 		return fmt.Errorf("update policy: %w", err)
 	}
-	slog.Info("Access bypass IP updated", "ipv4", addrs.v4, "ipv6", addrs.v6, "policy", p.Name)
+	slog.Info("Access bypass IP updated", "ipv4", addrs.v4, "ipv6", addrs.v6, "include", desired, "policy", p.Name)
 	return nil
 }
 
