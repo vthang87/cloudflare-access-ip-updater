@@ -43,6 +43,49 @@ docker compose up -d --force-recreate
 | `IP_CHECK_URL` | Plain-text public IPv4 endpoint (default `https://api.ipify.org`) |
 | `DRY_RUN` | `true` prevents updates |
 
+## Finding the values in Cloudflare
+
+### `CF_ACCOUNT_ID`
+
+Open [dash.cloudflare.com](https://dash.cloudflare.com) and select the account. The 32-character hex string right after the domain in the URL (`https://dash.cloudflare.com/<ACCOUNT_ID>/...`) is the account ID. It is also shown in the **API** section on the right side of any zone's **Overview** page.
+
+### `CF_API_TOKEN`
+
+1. **My Profile → API Tokens → Create Token → Create Custom Token**.
+2. Permissions: `Account` → `Access: Apps and Policies` → `Edit`.
+3. Account Resources: `Include` → your account.
+4. Do **not** set Client IP Address Filtering — the host's IP is exactly what changes.
+5. Create the token and copy it (it is shown only once).
+
+### Bypass policy
+
+Create a dedicated policy in the [Zero Trust dashboard](https://one.dash.cloudflare.com) with **Action: Bypass** and exactly one **Include** rule: **IP ranges** = your current public IP (e.g. `203.0.113.10/32`). Choose one of:
+
+- **Reusable policy (recommended)**: **Access → Policies → Add a policy**, then attach it to each application under the application's **Policies** tab. Set `CF_POLICY_ID` and leave `CF_APP_ID` empty.
+- **Application policy**: created inside one application's **Policies** tab. Set both `CF_APP_ID` and `CF_POLICY_ID`.
+
+### `CF_APP_ID` and `CF_POLICY_ID`
+
+The IDs are UUIDs and usually appear in the browser URL when you open the application or policy for editing. Note that the application's **AUD tag** is *not* the application ID.
+
+The most reliable way is to list them with the API, using the token and account ID from above (requires `jq`):
+
+```sh
+export CF_API_TOKEN=... CF_ACCOUNT_ID=...
+api() { curl -s -H "Authorization: Bearer $CF_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID$1"; }
+
+# Reusable policies -> CF_POLICY_ID
+api /access/policies | jq -r '.result[] | [.id, .decision, .name] | @tsv'
+
+# Applications -> CF_APP_ID
+api /access/apps | jq -r '.result[] | [.id, .name, .domain] | @tsv'
+
+# Policies of one application -> CF_POLICY_ID
+api /access/apps/<CF_APP_ID>/policies | jq -r '.result[] | [.id, .decision, .name] | @tsv'
+```
+
+Pick the row whose decision is `bypass`. Running the updater with `DRY_RUN=true` confirms the IDs are correct: it logs `IP unchanged` or `IP changed` instead of an error.
+
 ## Behavior / safeguards
 
 - Syncs at startup and periodically thereafter.
