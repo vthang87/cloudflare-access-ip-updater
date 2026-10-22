@@ -1,0 +1,13 @@
+services:
+  cf-access-ip-updater:
+    image: ghcr.io/vthang87/cloudflare-access-ip-updater:latest
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    pids_limit: 32
