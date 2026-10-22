@@ -1,11 +1,11 @@
 # Cloudflare Access Dynamic IP Updater (Go + Docker)
 
-Keeps one **dedicated Cloudflare Access application Bypass policy** synchronized to the host network's current public IPv4. Does not expose a port or require a database.
+Keeps one **dedicated Cloudflare Access Bypass policy** synchronized to the host network's current public **IPv4 and IPv6**. Does not expose a port or require a database.
 
 ## Requirements
 
 - Cloudflare Zero Trust Access application protected by an existing Access policy.
-- A **dedicated** Bypass policy with **exactly one** `Include → IP ranges` selector (initially your current public IP `/32`). Do not share this policy with unrelated conditions.
+- A **dedicated** Bypass policy whose Include rules are only IP ranges (one IPv4 `/32` and optionally one IPv6 `/128`). Do not share this policy with email/group selectors.
 - API token with permission to read/edit Access applications and policies for the account (use the minimum available scope).
 - Docker Compose on a machine **inside the LAN**, using its normal outbound WAN connection (not a VPN/proxy).
 
@@ -40,7 +40,7 @@ docker compose up -d --force-recreate
 | `CF_APP_ID` | Access application ID. **Optional**: leave empty when `CF_POLICY_ID` is a reusable (account-level) policy |
 | `CF_POLICY_ID` | Application policy ID, or reusable policy ID when `CF_APP_ID` is empty |
 | `CHECK_INTERVAL` | Interval, minimum `1m` (default `5m`) |
-| `IP_CHECK_URL` | Plain-text public IPv4 endpoint (default `https://api.ipify.org`) |
+| `IP_CHECK_URL` | Cloudflare `cdn-cgi/trace` URL (default `https://cloudflare.com/cdn-cgi/trace`); fetched once over IPv4 and once over IPv6 |
 | `DRY_RUN` | `true` prevents updates |
 
 ## Finding the values in Cloudflare
@@ -59,7 +59,7 @@ Open [dash.cloudflare.com](https://dash.cloudflare.com) and select the account. 
 
 ### Bypass policy
 
-Create a dedicated policy in the [Zero Trust dashboard](https://one.dash.cloudflare.com) with **Action: Bypass** and exactly one **Include** rule: **IP ranges** = your current public IP (e.g. `203.0.113.10/32`). Choose one of:
+Create a dedicated policy in the [Zero Trust dashboard](https://one.dash.cloudflare.com) with **Action: Bypass** and Include rules that are only **IP ranges** (start with your current IPv4 `/32`; the updater will add/update IPv6 `/128` as well). Choose one of:
 
 - **Reusable policy (recommended)**: **Access → Policies → Add a policy**, then attach it to each application under the application's **Policies** tab. Set `CF_POLICY_ID` and leave `CF_APP_ID` empty.
 - **Application policy**: created inside one application's **Policies** tab. Set both `CF_APP_ID` and `CF_POLICY_ID`.
@@ -89,12 +89,13 @@ Pick the row whose decision is `bypass`. Running the updater with `DRY_RUN=true`
 ## Behavior / safeguards
 
 - Syncs at startup and periodically thereafter.
-- Reads policy each cycle and updates only if the public IPv4 changed.
-- Refuses to change a policy unless its decision is `bypass` and it has exactly one IP Include selector.
+- Detects public IPv4 and IPv6 via Cloudflare `cdn-cgi/trace` (`tcp4` / `tcp6`).
+- Reads policy each cycle and updates only if the Include IP set changed.
+- Refuses to change a policy unless its decision is `bypass` and every Include selector is a single-host IP (`/32` or `/128`), max two.
 - Keeps the policy's other supported writable fields when issuing the PUT request.
 - Logs errors without exposing the API token; next cycle retries.
 - **IP-based bypass trusts every client sharing that public egress IP.** Keep application-level authentication in place.
 - A public IP change can temporarily interrupt access until the next successful sync.
+- Host (and Docker) must have working IPv6 outbound, or IPv6 detection fails and the cycle errors without changing the policy.
 - A reusable policy can be attached to several applications; updating it updates all of them.
-- Does not support IPv6 or IP lists in this MVP.
 - Verify API compatibility and permission scopes in your Cloudflare account before production use.
