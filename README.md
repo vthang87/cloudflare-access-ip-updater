@@ -37,8 +37,8 @@ docker compose up -d --force-recreate
 | --- | --- |
 | `CF_API_TOKEN` | Cloudflare API token |
 | `CF_ACCOUNT_ID` | Cloudflare account ID |
-| `CF_APP_ID` | Access application ID |
-| `CF_POLICY_ID` | **Application policy** ID |
+| `CF_APP_ID` | Access application ID. **Optional**: leave empty when `CF_POLICY_ID` is a reusable (account-level) policy |
+| `CF_POLICY_ID` | Application policy ID, or reusable policy ID when `CF_APP_ID` is empty |
 | `CHECK_INTERVAL` | Interval, minimum `1m` (default `5m`) |
 | `IP_CHECK_URL` | Plain-text public IPv4 endpoint (default `https://api.ipify.org`) |
 | `DRY_RUN` | `true` prevents updates |
@@ -52,5 +52,6 @@ docker compose up -d --force-recreate
 - Logs errors without exposing the API token; next cycle retries.
 - **IP-based bypass trusts every client sharing that public egress IP.** Keep application-level authentication in place.
 - A public IP change can temporarily interrupt access until the next successful sync.
-- Does not support IPv6, reusable account-level policies, multiple applications, or IP lists in this MVP.
+- A reusable policy can be attached to several applications; updating it updates all of them.
+- Does not support IPv6 or IP lists in this MVP.
 - Verify API compatibility and permission scopes in your Cloudflare account before production use.
