@@ -47,7 +47,7 @@ type policy struct {
 }
 
 type publicAddrs struct {
-	v4, v6 string // CIDR form: /32 or /128
+	v4, v6 string // CIDR form: IPv4 /32, IPv6 LAN /64
 }
 
 func required(name string) string {
@@ -145,7 +145,11 @@ func fetchTraceIP(ctx context.Context, network, url string) (string, error) {
 	if ip.To4() != nil {
 		return "", errors.New("expected IPv6 from tcp6 trace")
 	}
-	return ip.String() + "/128", nil
+	cidr, ok := ipv6LAN(ip)
+	if !ok {
+		return "", errors.New("could not derive IPv6 /64 LAN prefix")
+	}
+	return cidr, nil
 }
 
 func detectPublicAddrs(ctx context.Context, url string) (publicAddrs, error) {
@@ -164,6 +168,15 @@ func detectPublicAddrs(ctx context.Context, url string) (publicAddrs, error) {
 	return addrs, nil
 }
 
+func ipv6LAN(ip net.IP) (string, bool) {
+	ip = ip.To16()
+	if ip == nil || ip.To4() != nil {
+		return "", false
+	}
+	n := &net.IPNet{IP: ip, Mask: net.CIDRMask(64, 128)}
+	return n.IP.Mask(n.Mask).String() + "/64", true
+}
+
 func isIPv6CIDR(cidr string) bool {
 	ip, _, err := net.ParseCIDR(cidr)
 	return err == nil && ip != nil && ip.To4() == nil
@@ -176,8 +189,9 @@ func desiredCIDRs(addrs publicAddrs, existing []string) []string {
 	} else {
 		for _, c := range existing {
 			if isIPv6CIDR(c) {
+				// Expand a stored host /128 (or any v6) to the LAN /64 so Bypass covers the whole prefix.
 				out = append(out, c)
-				break // at most one preserved IPv6 alongside IPv4
+				break
 			}
 		}
 	}
@@ -243,23 +257,24 @@ func normalizeCIDR(s string) (string, bool) {
 		if ip.To4() != nil {
 			return ip.String() + "/32", true
 		}
-		return ip.String() + "/128", true
+		return ipv6LAN(ip)
 	}
 	ip, ipNet, err := net.ParseCIDR(s)
 	if err != nil {
 		return "", false
 	}
 	ones, bits := ipNet.Mask.Size()
-	if ip.To4() != nil {
+	if v4 := ip.To4(); v4 != nil {
 		if ones != 32 || bits != 32 {
 			return "", false
 		}
-		return ip.To4().String() + "/32", true
+		return v4.String() + "/32", true
 	}
-	if ones != 128 || bits != 128 {
+	// IPv6: accept host or prefix and canonicalize to the LAN /64.
+	if bits != 128 || ones < 64 {
 		return "", false
 	}
-	return ip.String() + "/128", true
+	return ipv6LAN(ip)
 }
 
 func policyIPs(include []json.RawMessage) ([]string, error) {
@@ -270,7 +285,7 @@ func policyIPs(include []json.RawMessage) ([]string, error) {
 	for _, raw := range include {
 		cidr, ok := selectorIP(raw)
 		if !ok {
-			return nil, errors.New("refusing to modify policy: every Include selector must be a single-host IP range")
+			return nil, errors.New("refusing to modify policy: Include must be IPv4 /32 or IPv6 /64 (LAN)")
 		}
 		out = append(out, cidr)
 	}
@@ -320,7 +335,7 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 	if p.Decision != "bypass" {
 		return fmt.Errorf("refusing to modify policy %q: decision must be bypass", p.Decision)
 	}
-	// Dedicated Bypass policy: only single-host IP Include selectors (IPv4 and/or IPv6).
+	// Dedicated Bypass policy: IPv4 /32 and optional IPv6 LAN /64 only.
 	old, err := policyIPs(p.Include)
 	if err != nil {
 		return fmt.Errorf("refusing to modify policy: %w", err)

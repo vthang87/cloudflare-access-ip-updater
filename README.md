@@ -5,7 +5,7 @@ Keeps one **dedicated Cloudflare Access Bypass policy** synchronized to the host
 ## Requirements
 
 - Cloudflare Zero Trust Access application protected by an existing Access policy.
-- A **dedicated** Bypass policy whose Include rules are only IP ranges (one IPv4 `/32` and optionally one IPv6 `/128`). Do not share this policy with email/group selectors.
+- A **dedicated** Bypass policy whose Include rules are only IP ranges (one IPv4 `/32` and optionally one IPv6 LAN `/64`). Do not share this policy with email/group selectors.
 - API token with permission to read/edit Access applications and policies for the account (use the minimum available scope).
 - Docker Compose on a machine **inside the LAN**, using its normal outbound WAN connection (not a VPN/proxy).
 
@@ -59,7 +59,7 @@ Open [dash.cloudflare.com](https://dash.cloudflare.com) and select the account. 
 
 ### Bypass policy
 
-Create a dedicated policy in the [Zero Trust dashboard](https://one.dash.cloudflare.com) with **Action: Bypass** and Include rules that are only **IP ranges** (start with your current IPv4 `/32`; the updater will add/update IPv6 `/128` as well). Choose one of:
+Create a dedicated policy in the [Zero Trust dashboard](https://one.dash.cloudflare.com) with **Action: Bypass** and Include rules that are only **IP ranges** (start with your current IPv4 `/32`; the updater will add/update the IPv6 LAN `/64`). Choose one of:
 
 - **Reusable policy (recommended)**: **Access → Policies → Add a policy**, then attach it to each application under the application's **Policies** tab. Set `CF_POLICY_ID` and leave `CF_APP_ID` empty.
 - **Application policy**: created inside one application's **Policies** tab. Set both `CF_APP_ID` and `CF_POLICY_ID`.
@@ -90,12 +90,13 @@ Pick the row whose decision is `bypass`. Running the updater with `DRY_RUN=true`
 
 - Syncs at startup and periodically thereafter.
 - Detects public IPv4 (required) and IPv6 (optional) via Cloudflare `cdn-cgi/trace` (`tcp4` / `tcp6`).
+- Writes IPv4 as `/32` and IPv6 as the LAN `/64` (so temporary/privacy addresses on the same prefix still match).
 - Reads policy each cycle and updates only if the Include IP set changed.
-- Refuses to change a policy unless its decision is `bypass` and every Include selector is a single-host IP (`/32` or `/128`), max two.
-- If IPv6 detection fails (common when the host has no IPv6 route), IPv4 still updates and any existing IPv6 Include is preserved.
+- Refuses to change a policy unless its decision is `bypass` and every Include is IPv4 `/32` or IPv6 `/64`, max two.
+- If IPv6 detection fails, IPv4 still updates; an existing IPv6 Include is preserved and expanded to `/64` if it was a host `/128`.
 - Keeps the policy's other supported writable fields when issuing the PUT request.
 - Logs errors without exposing the API token; next cycle retries.
-- **IP-based bypass trusts every client sharing that public egress IP.** Keep application-level authentication in place.
+- **IP-based bypass trusts every client on that IPv4 WAN IP or IPv6 `/64`.** Keep application-level authentication in place.
 - A public IP change can temporarily interrupt access until the next successful sync.
 - Compose uses `network_mode: host` so egress matches the host WAN (needed for IPv6 when the host supports it).
 - A reusable policy can be attached to several applications; updating it updates all of them.
