@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	_ "time/tzdata" // embed zoneinfo so TZ works in scratch images
 )
 
 const defaultTraceURL = "https://cloudflare.com/cdn-cgi/trace"

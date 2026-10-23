@@ -42,6 +42,7 @@ docker compose up -d --force-recreate
 | `CHECK_INTERVAL` | Interval, minimum `1m` (default `5m`) |
 | `IP_CHECK_URL` | Cloudflare `cdn-cgi/trace` URL (default `https://cloudflare.com/cdn-cgi/trace`); fetched once over IPv4 and once over IPv6 |
 | `DRY_RUN` | `true` prevents updates |
+| `TZ` | Timezone for the app `"time"` log field (default `Asia/Ho_Chi_Minh`). Portainer/Docker still prefix lines in UTC |
 
 ## Finding the values in Cloudflare
 
