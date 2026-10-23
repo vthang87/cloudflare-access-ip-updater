@@ -234,22 +234,26 @@ func policyEndpoint(c config) string {
 	return fmt.Sprintf("/accounts/%s/access/apps/%s/policies/%s", c.account, c.app, c.policy)
 }
 
-func selectorIP(raw json.RawMessage) (string, bool) {
+func selectorIP(raw json.RawMessage) (stored string, canonical string, ok bool) {
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) != nil {
-		return "", false
+		return "", "", false
 	}
 	v, ok := obj["ip"]
 	if !ok {
-		return "", false
+		return "", "", false
 	}
 	var s struct {
 		IP string `json:"ip"`
 	}
 	if json.Unmarshal(v, &s) != nil || s.IP == "" {
-		return "", false
+		return "", "", false
 	}
-	return normalizeCIDR(s.IP)
+	canonical, ok = normalizeCIDR(s.IP)
+	if !ok {
+		return "", "", false
+	}
+	return s.IP, canonical, true
 }
 
 func normalizeCIDR(s string) (string, bool) {
@@ -277,20 +281,24 @@ func normalizeCIDR(s string) (string, bool) {
 	return ipv6LAN(ip)
 }
 
-func policyIPs(include []json.RawMessage) ([]string, error) {
+func policyIPs(include []json.RawMessage) (canonical []string, needsRewrite bool, err error) {
 	if len(include) == 0 || len(include) > 2 {
-		return nil, fmt.Errorf("expected 1–2 Include IP selectors, found %d", len(include))
+		return nil, false, fmt.Errorf("expected 1–2 Include IP selectors, found %d", len(include))
 	}
 	out := make([]string, 0, len(include))
 	for _, raw := range include {
-		cidr, ok := selectorIP(raw)
+		stored, cidr, ok := selectorIP(raw)
 		if !ok {
-			return nil, errors.New("refusing to modify policy: Include must be IPv4 /32 or IPv6 /64 (LAN)")
+			return nil, false, errors.New("refusing to modify policy: Include must be IPv4 /32 or IPv6 /64 (LAN)")
+		}
+		if stored != cidr {
+			// e.g. host /128 in Cloudflare → rewrite as LAN /64
+			needsRewrite = true
 		}
 		out = append(out, cidr)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, needsRewrite, nil
 }
 
 func sameSet(a, b []string) bool {
@@ -336,12 +344,12 @@ func syncOnce(ctx context.Context, client *http.Client, c config) error {
 		return fmt.Errorf("refusing to modify policy %q: decision must be bypass", p.Decision)
 	}
 	// Dedicated Bypass policy: IPv4 /32 and optional IPv6 LAN /64 only.
-	old, err := policyIPs(p.Include)
+	old, needsRewrite, err := policyIPs(p.Include)
 	if err != nil {
 		return fmt.Errorf("refusing to modify policy: %w", err)
 	}
 	desired := desiredCIDRs(addrs, old)
-	if sameSet(old, desired) {
+	if sameSet(old, desired) && !needsRewrite {
 		slog.Info("IP unchanged", "ipv4", addrs.v4, "ipv6", addrs.v6, "include", desired, "policy", p.Name)
 		return nil
 	}
