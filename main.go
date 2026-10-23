@@ -256,6 +256,18 @@ func selectorIP(raw json.RawMessage) (stored string, canonical string, ok bool) 
 	return s.IP, canonical, true
 }
 
+func isCanonicalCIDR(s string) bool {
+	ip, ipNet, err := net.ParseCIDR(s)
+	if err != nil {
+		return false
+	}
+	ones, bits := ipNet.Mask.Size()
+	if v4 := ip.To4(); v4 != nil {
+		return ones == 32 && bits == 32
+	}
+	return ones == 64 && bits == 128
+}
+
 func normalizeCIDR(s string) (string, bool) {
 	if ip := net.ParseIP(s); ip != nil {
 		if ip.To4() != nil {
@@ -291,7 +303,7 @@ func policyIPs(include []json.RawMessage) (canonical []string, needsRewrite bool
 		if !ok {
 			return nil, false, errors.New("refusing to modify policy: Include must be IPv4 /32 or IPv6 /64 (LAN)")
 		}
-		if stored != cidr {
+		if !isCanonicalCIDR(stored) {
 			// e.g. host /128 in Cloudflare → rewrite as LAN /64
 			needsRewrite = true
 		}
